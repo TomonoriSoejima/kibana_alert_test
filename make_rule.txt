@@ -1,0 +1,40 @@
+POST kbn:/api/detection_engine/rules
+{
+  "rule_id": "new-rule",
+  "name": "my-new-rule",
+  "description": "indicator match test",
+  "risk_score": 21,
+  "severity": "low",
+  "interval": "1m",
+  "from": "now-120s",
+  "type": "threat_match",
+  "language": "kuery",
+  "index": [
+    "software"
+  ],
+  "query": "*:*",
+  "enabled": true,
+  "filters": [],
+  "threat_query": "@timestamp >= \"now-30d/d\"",
+  "threat_index": [
+    "eol-versions"
+  ],
+  "threat_mapping": [
+    {
+      "entries": [
+        {
+          "field": "version.keyword",
+          "type": "mapping",
+          "value": "threat.indicator.version.keyword"
+        },
+        {
+          "field": "software.keyword",
+          "type": "mapping",
+          "value": "threat.indicator.software.keyword"
+        }
+      ]
+    }
+  ],
+  "threat_language": "kuery",
+  "threat_indicator_path": "threat.indicator"
+}
