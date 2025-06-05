@@ -38,7 +38,7 @@ To create the Indicator Match rule in Kibana:
 2. Paste the following into the console:
 
 ```
-POST api/detection_engine/rules
+POST kbn:api/detection_engine/rules
 {
   "rule_id": "new-rule",
   "name": "my-new-rule",
