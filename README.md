@@ -15,8 +15,54 @@ This project demonstrates how the Indicator Match rule in Elastic Security can p
 2. **Create two data views** in Kibana:
    - `software`
    - `eol-versions`
-3. **Set up an Indicator Match rule** in Elastic Security that matches on fields like `software`/`threat.indicator.software` and `version`/`threat.indicator.version` using AND conditions.
-4. **Observe the alerts** generated. You may see false positives due to the way AND logic is applied in the rule engine, as described in the linked issue.
+  
+```
+POST kbn:/api/content_management/rpc/create
+{
+  "contentTypeId": "index-pattern",
+  "data": {
+    "fieldAttrs": "{}",
+    "title": "software",
+    "timeFieldName": "@timestamp",
+    "sourceFilters": "[]",
+    "fields": "[]",
+    "fieldFormatMap": "{}",
+    "runtimeFieldMap": "{}",
+    "name": "software",
+    "allowHidden": false
+  },
+  "options": {
+    "id": "software",
+    "overwrite": false
+  },
+  "version": 1
+}
+
+POST kbn:/api/content_management/rpc/create
+{
+  "contentTypeId": "index-pattern",
+  "data": {
+    "fieldAttrs": "{}",
+    "title": "eol-versions",
+    "timeFieldName": "@timestamp",
+    "sourceFilters": "[]",
+    "fields": "[]",
+    "fieldFormatMap": "{}",
+    "runtimeFieldMap": "{}",
+    "name": "eol-versions",
+    "allowHidden": false
+  },
+  "options": {
+    "id": "eol-versions",
+    "overwrite": false
+  },
+  "version": 1
+}
+```
+
+
+4. **Set up an Indicator Match rule** in Elastic Security that matches on fields like `software`/`threat.indicator.software` and `version`/`threat.indicator.version` using AND conditions.
+5. **Observe the alerts** generated. You may see false positives due to the way AND logic is applied in the rule engine, as described in the linked issue.
 
 ## Why This Matters
 This setup helps you:
