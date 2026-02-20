@@ -6,9 +6,24 @@ import json
 import argparse
 import os
 
-# Default configurations
-# CREDENTIALS_FILE = 'credentials-7d8ef4-2025-Jun-03--19_04_32.csv'
-CREDENTIALS_FILE = 'v7.csv'
+# Auto-discover credentials CSV file (any CSV in the script directory with 'username' and 'password' columns)
+def find_credentials_file():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    for fname in os.listdir(script_dir):
+        if not fname.endswith('.csv'):
+            continue
+        fpath = os.path.join(script_dir, fname)
+        try:
+            with open(fpath, newline='') as f:
+                header = f.readline().lower()
+                if 'username' in header and 'password' in header:
+                    print(f"Found credentials file: {fname}")
+                    return fpath
+        except Exception:
+            continue
+    raise SystemExit('No credentials CSV file found. Ensure a CSV with username/password columns is in the script directory.')
+
+CREDENTIALS_FILE = find_credentials_file()
 
 CLOUD_API_BASE = 'https://api.elastic-cloud.com/api/v1'
 
@@ -107,11 +122,12 @@ def discover_es_endpoint(deployment_id, cloud_api_key):
 # Parse command-line arguments
 def parse_args():
     parser = argparse.ArgumentParser(description="Bulk software/threat inventory to Elasticsearch.")
-    parser.add_argument('--credentials', type=str, default=CREDENTIALS_FILE, help='CSV file with username/password')
+    parser.add_argument('--credentials', type=str, default=None, help='CSV file with username/password (auto-discovered if not specified)')
     return parser.parse_args()
 
 args = parse_args()
-CREDENTIALS_FILE = args.credentials
+if args.credentials:
+    CREDENTIALS_FILE = args.credentials
 username, password = get_credentials(CREDENTIALS_FILE)
 ENDPOINT = discover_es_endpoint(discover_deployment_id(CLOUD_API_KEY), CLOUD_API_KEY)
 
