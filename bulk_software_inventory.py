@@ -4,15 +4,29 @@ import time
 from datetime import datetime, timezone, timedelta
 import json
 import argparse
+import os
 
 # Default configurations
 # CREDENTIALS_FILE = 'credentials-7d8ef4-2025-Jun-03--19_04_32.csv'
-CREDENTIALS_FILE = '8180.csv'
+CREDENTIALS_FILE = 'v7.csv'
 
-# 8.15.5
-# ENDPOINT = 'https://422d8d8900294219b0768d9951b44b05.asia-northeast1.gcp.cloud.es.io/'
-# 8.18.0
-ENDPOINT = 'https://c9c767b07f2540b29168b7d0e0377c92.asia-northeast1.gcp.cloud.es.io'
+CLOUD_API_BASE = 'https://api.elastic-cloud.com/api/v1'
+
+# Load CLOUD_API_KEY from .env file if present, otherwise fall back to environment variable
+def load_cloud_api_key():
+    env_file = os.path.join(os.path.dirname(__file__), '.env')
+    if os.path.exists(env_file):
+        with open(env_file) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('ELASTIC_CLOUD_API_KEY='):
+                    return line.split('=', 1)[1].strip()
+    key = os.environ.get('ELASTIC_CLOUD_API_KEY')
+    if not key:
+        raise SystemExit('ELASTIC_CLOUD_API_KEY not set. Add it to .env or set as environment variable.')
+    return key
+
+CLOUD_API_KEY = load_cloud_api_key()
 
 # Read credentials
 def get_credentials(filename):
@@ -21,17 +35,85 @@ def get_credentials(filename):
         row = next(reader)
         return row['username'], row['password']
 
+# Discover deployment ID from Elastic Cloud API by testing ES credentials
+def discover_deployment_id(cloud_api_key):
+    hdrs = {
+        'Authorization': f'ApiKey {cloud_api_key}',
+        'Content-Type': 'application/json',
+    }
+    resp = requests.get(CLOUD_API_BASE + '/deployments', headers=hdrs, timeout=10)
+    resp.raise_for_status()
+    deployments = resp.json().get('deployments', [])
+    if not deployments:
+        raise RuntimeError("No deployments found for this Cloud API key")
+    print(f"Found {len(deployments)} deployment(s): {[d.get('name', d['id']) for d in deployments]}")
+    # Try credentials against each deployment's ES endpoint to find the matching one
+    for dep in deployments:
+        dep_id = dep['id']
+        r2 = requests.get(CLOUD_API_BASE + f'/deployments/{dep_id}', headers=hdrs, timeout=10)
+        es_resources = r2.json().get('resources', {}).get('elasticsearch', [])
+        if not es_resources:
+            continue
+        metadata = es_resources[0].get('info', {}).get('metadata', {})
+        es_url = metadata.get('aliased_url') or metadata.get('service_url')
+        if not es_url:
+            continue
+        try:
+            test = requests.get(es_url.rstrip('/'), auth=(username, password), timeout=10)
+            if test.status_code == 200:
+                print(f"Matched deployment: {dep_id} ({dep.get('name', '')}) -> {es_url}")
+                return dep_id
+        except Exception:
+            continue
+    # Fall back to first deployment if none matched
+    dep = deployments[0]
+    print(f"No credential match found, falling back to first deployment: {dep['id']} ({dep.get('name', '')})")
+    return dep['id']
+
+# Discover Elasticsearch endpoint from Elastic Cloud API (apm-oneclick pattern)
+def discover_es_endpoint(deployment_id, cloud_api_key):
+    candidate_paths = [
+        f"/deployments/{deployment_id}/elasticsearch/main-elasticsearch/_info",
+        f"/deployments/{deployment_id}/elasticsearch/main-elasticsearch/info",
+        f"/deployments/{deployment_id}/elasticsearch/main-elasticsearch",
+        f"/deployments/{deployment_id}",
+    ]
+    hdrs = {
+        'Authorization': f'ApiKey {cloud_api_key}',
+        'Content-Type': 'application/json',
+    }
+    for path in candidate_paths:
+        try:
+            resp = requests.get(CLOUD_API_BASE + path, headers=hdrs, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                es_resources = data.get('resources', {}).get('elasticsearch', [])
+                if es_resources:
+                    metadata = es_resources[0].get('info', {}).get('metadata', {})
+                    url = metadata.get('aliased_url') or metadata.get('service_url')
+                    if url:
+                        print(f"Discovered ES endpoint: {url}")
+                        return url.rstrip('/')
+                metadata = data.get('metadata', {})
+                url = metadata.get('aliased_url') or metadata.get('service_url')
+                if url:
+                    print(f"Discovered ES endpoint: {url}")
+                    return url.rstrip('/')
+        except Exception as e:
+            print(f"Probe failed for {path}: {e}")
+            continue
+    raise RuntimeError(f"Could not discover ES endpoint for deployment {deployment_id}")
+
 # Parse command-line arguments
 def parse_args():
     parser = argparse.ArgumentParser(description="Bulk software/threat inventory to Elasticsearch.")
-    parser.add_argument('--endpoint', type=str, default=ENDPOINT, help='Elasticsearch bulk endpoint URL')
     parser.add_argument('--credentials', type=str, default=CREDENTIALS_FILE, help='CSV file with username/password')
     return parser.parse_args()
 
 args = parse_args()
-ENDPOINT = args.endpoint
 CREDENTIALS_FILE = args.credentials
 username, password = get_credentials(CREDENTIALS_FILE)
+ENDPOINT = discover_es_endpoint(discover_deployment_id(CLOUD_API_KEY), CLOUD_API_KEY)
 
 # Example software data
 software_list = [
