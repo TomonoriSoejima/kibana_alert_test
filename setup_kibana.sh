@@ -17,45 +17,6 @@ if [ -f "${SCRIPT_DIR}/.env" ]; then
   export $(grep -v '^#' "${SCRIPT_DIR}/.env" | xargs) 2>/dev/null || true
 fi
 
-# ---------- discover Kibana URL from Cloud API if not set ----------
-if [ -z "${KIBANA_URL:-}" ]; then
-  CLOUD_API_KEY="${ELASTIC_CLOUD_API_KEY:?KIBANA_URL not set and ELASTIC_CLOUD_API_KEY not found. Add it to .env or set KIBANA_URL manually.}"
-  echo "==> KIBANA_URL not set — discovering from Elastic Cloud API..."
-  KIBANA_URL=$(python3 - <<PYEOF
-import requests, sys
-
-CLOUD_API_BASE = "https://api.elastic-cloud.com/api/v1"
-CLOUD_API_KEY  = "${CLOUD_API_KEY}"
-hdrs = {"Authorization": f"ApiKey {CLOUD_API_KEY}", "Content-Type": "application/json"}
-
-resp = requests.get(CLOUD_API_BASE + "/deployments", headers=hdrs, timeout=10)
-resp.raise_for_status()
-deployments = resp.json().get("deployments", [])
-if not deployments:
-    sys.exit("No deployments found for this Cloud API key")
-
-# Use the first deployment (same logic as bulk_software_inventory.py)
-dep_id = deployments[0]["id"]
-dep_name = deployments[0].get("name", dep_id)
-
-r2 = requests.get(CLOUD_API_BASE + f"/deployments/{dep_id}", headers=hdrs, timeout=10)
-r2.raise_for_status()
-kb_resources = r2.json().get("resources", {}).get("kibana", [])
-if not kb_resources:
-    sys.exit(f"No Kibana resource found in deployment {dep_name}")
-
-metadata = kb_resources[0].get("info", {}).get("metadata", {})
-url = metadata.get("aliased_url") or metadata.get("service_url")
-if not url:
-    sys.exit(f"Could not extract Kibana URL from deployment {dep_name}")
-
-import sys as _sys
-print(f"[discovered from deployment: {dep_name}]", file=_sys.stderr)
-print(url.rstrip("/"))
-PYEOF
-)
-fi
-
 # ---------- discover credentials from CSV if not set ----------
 if [ -z "${KIBANA_PASSWORD:-}" ]; then
   echo "==> KIBANA_PASSWORD not set — discovering from credentials CSV..."
@@ -63,7 +24,7 @@ if [ -z "${KIBANA_PASSWORD:-}" ]; then
 import csv, os, sys
 
 script_dir = "${SCRIPT_DIR}"
-for fname in os.listdir(script_dir):
+for fname in sorted(os.listdir(script_dir)):
     if not fname.endswith(".csv"):
         continue
     fpath = os.path.join(script_dir, fname)
@@ -90,6 +51,73 @@ fi
 # ---------- required vars ----------
 KIBANA_USER="${KIBANA_USER:-elastic}"
 KIBANA_PASSWORD="${KIBANA_PASSWORD:?Could not determine KIBANA_PASSWORD}"
+
+# ---------- discover Kibana URL from Cloud API (credential-matched) if not set ----------
+if [ -z "${KIBANA_URL:-}" ]; then
+  CLOUD_API_KEY="${ELASTIC_CLOUD_API_KEY:?KIBANA_URL not set and ELASTIC_CLOUD_API_KEY not found. Add it to .env or set KIBANA_URL manually.}"
+  echo "==> KIBANA_URL not set — discovering from Elastic Cloud API (testing credentials)..."
+  KIBANA_URL=$(python3 - <<PYEOF
+import requests, sys
+
+CLOUD_API_BASE = "https://api.elastic-cloud.com/api/v1"
+CLOUD_API_KEY  = "${CLOUD_API_KEY}"
+USERNAME       = "${KIBANA_USER}"
+PASSWORD       = "${KIBANA_PASSWORD}"
+
+hdrs = {"Authorization": f"ApiKey {CLOUD_API_KEY}", "Content-Type": "application/json"}
+
+resp = requests.get(CLOUD_API_BASE + "/deployments", headers=hdrs, timeout=10)
+resp.raise_for_status()
+deployments = resp.json().get("deployments", [])
+if not deployments:
+    sys.exit("No deployments found for this Cloud API key")
+
+print(f"Found {len(deployments)} deployment(s): {[d.get('name', d['id']) for d in deployments]}", file=sys.stderr)
+
+for dep in deployments:
+    dep_id   = dep["id"]
+    dep_name = dep.get("name", dep_id)
+    r2 = requests.get(CLOUD_API_BASE + f"/deployments/{dep_id}", headers=hdrs, timeout=10)
+    resources = r2.json().get("resources", {})
+    kb_resources = resources.get("kibana", [])
+    es_resources = resources.get("elasticsearch", [])
+    if not kb_resources or not es_resources:
+        continue
+    kb_meta = kb_resources[0].get("info", {}).get("metadata", {})
+    es_meta = es_resources[0].get("info", {}).get("metadata", {})
+    kb_url = kb_meta.get("aliased_url") or kb_meta.get("service_url")
+    es_url = es_meta.get("aliased_url") or es_meta.get("service_url")
+    if not kb_url or not es_url:
+        continue
+    # Test credentials against the ES endpoint (reliable auth check)
+    try:
+        test = requests.get(es_url.rstrip("/"), auth=(USERNAME, PASSWORD), timeout=10)
+        if test.status_code == 200:
+            print(f"[matched deployment: {dep_name}]", file=sys.stderr)
+            print(kb_url.rstrip("/"))
+            sys.exit(0)
+    except Exception:
+        continue
+
+# Fall back to first deployment with a Kibana resource
+for dep in deployments:
+    dep_id   = dep["id"]
+    dep_name = dep.get("name", dep_id)
+    r2 = requests.get(CLOUD_API_BASE + f"/deployments/{dep_id}", headers=hdrs, timeout=10)
+    kb_resources = r2.json().get("resources", {}).get("kibana", [])
+    if not kb_resources:
+        continue
+    metadata = kb_resources[0].get("info", {}).get("metadata", {})
+    url = metadata.get("aliased_url") or metadata.get("service_url")
+    if url:
+        print(f"[no ES credential match, falling back to: {dep_name}]", file=sys.stderr)
+        print(url.rstrip("/"))
+        sys.exit(0)
+
+sys.exit("Could not find a Kibana URL in any deployment")
+PYEOF
+)
+fi
 
 AUTH="${KIBANA_USER}:${KIBANA_PASSWORD}"
 HEADERS=(-H "kbn-xsrf: true" -H "Content-Type: application/json")
