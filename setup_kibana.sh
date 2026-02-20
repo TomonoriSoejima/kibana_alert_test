@@ -4,7 +4,7 @@
 # Usage (fully automatic — reads .env for ELASTIC_CLOUD_API_KEY + credentials CSV):
 #   bash setup_kibana.sh
 #
-# Override any value explicitly:
+# All values are auto-discovered. Override any explicitly if needed:
 #   KIBANA_URL=https://<host> KIBANA_USER=elastic KIBANA_PASSWORD=<pw> bash setup_kibana.sh
 
 set -euo pipefail
@@ -56,9 +56,40 @@ PYEOF
 )
 fi
 
+# ---------- discover credentials from CSV if not set ----------
+if [ -z "${KIBANA_PASSWORD:-}" ]; then
+  echo "==> KIBANA_PASSWORD not set — discovering from credentials CSV..."
+  CREDS=$(python3 - <<PYEOF
+import csv, os, sys
+
+script_dir = "${SCRIPT_DIR}"
+for fname in os.listdir(script_dir):
+    if not fname.endswith(".csv"):
+        continue
+    fpath = os.path.join(script_dir, fname)
+    try:
+        with open(fpath, newline="") as f:
+            header = f.readline().lower()
+            if "username" not in header or "password" not in header:
+                continue
+            f.seek(0)
+            row = next(csv.DictReader(f))
+            print(f"[credentials from: {fname}]", file=sys.stderr)
+            print(row["username"])
+            print(row["password"])
+            sys.exit(0)
+    except Exception:
+        continue
+sys.exit("No credentials CSV found in script directory")
+PYEOF
+)
+  KIBANA_USER=$(echo "${CREDS}" | sed -n '1p')
+  KIBANA_PASSWORD=$(echo "${CREDS}" | sed -n '2p')
+fi
+
 # ---------- required vars ----------
 KIBANA_USER="${KIBANA_USER:-elastic}"
-KIBANA_PASSWORD="${KIBANA_PASSWORD:?Set KIBANA_PASSWORD}"
+KIBANA_PASSWORD="${KIBANA_PASSWORD:?Could not determine KIBANA_PASSWORD}"
 
 AUTH="${KIBANA_USER}:${KIBANA_PASSWORD}"
 HEADERS=(-H "kbn-xsrf: true" -H "Content-Type: application/json")
