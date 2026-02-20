@@ -5,10 +5,11 @@ See [elastic/kibana#179825](https://github.com/elastic/kibana/issues/179825).
 
 ## How it works
 
+- `setup_kibana.sh` creates the data views and the Indicator Match detection rule in Kibana.
 - `bulk_software_inventory.py` populates two indexes:
   - `eol-versions` — threat indicator documents (bootstrapped once at startup)
   - `software` — software inventory documents (sent in a loop every 30 seconds)
-- The script auto-discovers the Elasticsearch endpoint and credentials from `.env` and a local CSV file.
+- Both scripts auto-discover the endpoint and credentials from `.env` and a local CSV file.
 
 ## Quick Start
 
@@ -19,16 +20,17 @@ ELASTIC_CLOUD_API_KEY=<your-key>
 
 **2. Place a credentials CSV** (with `username` and `password` columns) in the same directory.
 
-**3. Send data to Elasticsearch:**
-```bash
-python3 bulk_software_inventory.py
-```
-
-**4. Run Kibana setup** (data views + detection rule):
+**3. Run Kibana setup** (data views + detection rule):
 ```bash
 bash setup_kibana.sh
 ```
 Kibana URL and credentials are auto-discovered from the Cloud API key (`.env`) and the credentials CSV. Override any value explicitly if needed.
+
+**4. Start sending data to Elasticsearch:**
+```bash
+python3 bulk_software_inventory.py
+```
+Bootstraps the `eol-versions` threat indicators once, then continuously sends `software` inventory documents every 30 seconds.
 
 ## References
 - [Indicator Match Rule docs](https://www.elastic.co/guide/en/security/current/indicator-match-rule.html)
