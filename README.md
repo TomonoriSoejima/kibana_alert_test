@@ -26,11 +26,9 @@ python3 bulk_software_inventory.py
 
 **4. Run Kibana setup** (data views + detection rule):
 ```bash
-KIBANA_URL=https://<your-kibana-host> \
-KIBANA_USER=elastic \
-KIBANA_PASSWORD=<password> \
-bash setup_kibana.sh
+KIBANA_PASSWORD=<password> bash setup_kibana.sh
 ```
+`KIBANA_URL` is auto-discovered from the Cloud API key in `.env`. You can still override it explicitly if needed.
 
 ## References
 - [Indicator Match Rule docs](https://www.elastic.co/guide/en/security/current/indicator-match-rule.html)

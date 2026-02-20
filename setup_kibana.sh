@@ -1,24 +1,62 @@
 #!/usr/bin/env bash
 # setup_kibana.sh — Create data views and the Indicator Match detection rule via Kibana API
 #
-# Usage:
-#   KIBANA_URL=https://<host> KIBANA_USER=elastic KIBANA_PASSWORD=<pw> bash setup_kibana.sh
+# Usage (fully automatic — reads .env for ELASTIC_CLOUD_API_KEY + credentials CSV):
+#   bash setup_kibana.sh
 #
-# Or set these in your shell before running:
-#   export KIBANA_URL=https://<host>
-#   export KIBANA_USER=elastic
-#   export KIBANA_PASSWORD=<pw>
+# Override any value explicitly:
+#   KIBANA_URL=https://<host> KIBANA_USER=elastic KIBANA_PASSWORD=<pw> bash setup_kibana.sh
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 # ---------- load .env if present ----------
-if [ -f "$(dirname "$0")/.env" ]; then
+if [ -f "${SCRIPT_DIR}/.env" ]; then
   # shellcheck disable=SC2046
-  export $(grep -v '^#' "$(dirname "$0")/.env" | xargs) 2>/dev/null || true
+  export $(grep -v '^#' "${SCRIPT_DIR}/.env" | xargs) 2>/dev/null || true
+fi
+
+# ---------- discover Kibana URL from Cloud API if not set ----------
+if [ -z "${KIBANA_URL:-}" ]; then
+  CLOUD_API_KEY="${ELASTIC_CLOUD_API_KEY:?KIBANA_URL not set and ELASTIC_CLOUD_API_KEY not found. Add it to .env or set KIBANA_URL manually.}"
+  echo "==> KIBANA_URL not set — discovering from Elastic Cloud API..."
+  KIBANA_URL=$(python3 - <<PYEOF
+import requests, sys
+
+CLOUD_API_BASE = "https://api.elastic-cloud.com/api/v1"
+CLOUD_API_KEY  = "${CLOUD_API_KEY}"
+hdrs = {"Authorization": f"ApiKey {CLOUD_API_KEY}", "Content-Type": "application/json"}
+
+resp = requests.get(CLOUD_API_BASE + "/deployments", headers=hdrs, timeout=10)
+resp.raise_for_status()
+deployments = resp.json().get("deployments", [])
+if not deployments:
+    sys.exit("No deployments found for this Cloud API key")
+
+# Use the first deployment (same logic as bulk_software_inventory.py)
+dep_id = deployments[0]["id"]
+dep_name = deployments[0].get("name", dep_id)
+
+r2 = requests.get(CLOUD_API_BASE + f"/deployments/{dep_id}", headers=hdrs, timeout=10)
+r2.raise_for_status()
+kb_resources = r2.json().get("resources", {}).get("kibana", [])
+if not kb_resources:
+    sys.exit(f"No Kibana resource found in deployment {dep_name}")
+
+metadata = kb_resources[0].get("info", {}).get("metadata", {})
+url = metadata.get("aliased_url") or metadata.get("service_url")
+if not url:
+    sys.exit(f"Could not extract Kibana URL from deployment {dep_name}")
+
+import sys as _sys
+print(f"[discovered from deployment: {dep_name}]", file=_sys.stderr)
+print(url.rstrip("/"))
+PYEOF
+)
 fi
 
 # ---------- required vars ----------
-KIBANA_URL="${KIBANA_URL:?Set KIBANA_URL}"
 KIBANA_USER="${KIBANA_USER:-elastic}"
 KIBANA_PASSWORD="${KIBANA_PASSWORD:?Set KIBANA_PASSWORD}"
 
